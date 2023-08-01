@@ -99,14 +99,7 @@ mtlLoader.load(`data/${baseName}.mtl`, materials => {
                         }
                     }
                 }
-                showTextures(textures);
                 clusterize(triangles);
-                // calculate triangle normals
-                for (let i = 0; i < triangles.length; i++) {
-                    let normal = new THREE.Vector3();
-                    triangles[i].getNormal(normal);
-                    //console.log(normal);
-                }
             }
         });
     });
@@ -141,7 +134,7 @@ function createVerticesToTrianglesMap(triangles) {
 
 function createAdjacencyMap(vertexToTrianglesMap) {
     // Convert Map to an array and sort it by vertex values
-    const sortedVertices = Array.from(vertexToTrianglesMap.entries()).sort();
+    const sortedVertices = Array.from(vertexToTrianglesMap.entries());//.sort();
 
     // Empty adjacency map
     const adjacencyMap = new Map();
@@ -160,8 +153,10 @@ function createAdjacencyMap(vertexToTrianglesMap) {
                 // Add the intersecting triangles to the adjacency map
                 intersectingTriangles.forEach(triangleIndex => {
                     const adjacentTriangles = intersectingTriangles.filter(i => i !== triangleIndex);
-                    if (adjacencyMap.has(triangleIndex) && adjacentTriangles.length > 0) {
+                    if (adjacencyMap.has(triangleIndex)) {
+                        if (adjacentTriangles.length > 0) {
                             adjacencyMap.get(triangleIndex).add(...adjacentTriangles);
+                        }
                     } else {
                         adjacencyMap.set(triangleIndex, new Set(adjacentTriangles));
                     }
@@ -172,6 +167,23 @@ function createAdjacencyMap(vertexToTrianglesMap) {
     return adjacencyMap;
 }
 
+function areAdjacent(triangle1, triangle2) {
+    // Convert triangle vertices to strings for comparison
+    let triangle1Vertices = triangle1.map(vertex => JSON.stringify(vertex));
+    let triangle2Vertices = triangle2.map(vertex => JSON.stringify(vertex));
+    
+    // Count the number of vertices the triangles share
+    let sharedVertices = triangle1Vertices.filter(vertex => triangle2Vertices.includes(vertex));
+
+    // If they share two vertices, they are adjacent
+    return sharedVertices.length === 2;
+}
+
+/* group triangles
+    by adjacency of triangles
+    and by adjacent triangle normals within a threshold
+    and by adjacency of uvs
+*/
 function groupByAdjencyAndNormals(adjacencyMap) {
     // Calculate the normals for each triangle
     const normals = triangles.map(triangle => {
@@ -194,7 +206,9 @@ function groupByAdjencyAndNormals(adjacencyMap) {
             neighbours.forEach(neighbour => {
                 // Only continue exploring if the angle between normals is below the threshold
                 if (normals[node].angleTo(normals[neighbour]) < angleThresholdRadians) {
-                dfs(neighbour, visited);
+                    if (areAdjacent(textures[node], textures[neighbour])) {
+                        dfs(neighbour, visited);
+                    }
                 }
             });
         }
@@ -215,7 +229,7 @@ function groupByAdjencyAndNormals(adjacencyMap) {
     return components;
 }
 
-function mergeUVComponents(connectedComponents) {
+function buildPolygons(connectedComponents) {
     let polygons = [];
 
     for (let component of connectedComponents) {
@@ -227,46 +241,82 @@ function mergeUVComponents(connectedComponents) {
         }
 
         // Start with one triangle
-        let polygon = [...textures[triangles[0]]];
+        let polygon = [...textures[triangles[0]]].map(vertex => JSON.stringify(vertex));
     
         // Remove the first triangle from the list
         triangles = triangles.slice(1);
 
-        while (triangles.length > 0) {
-            for (let i = 0; i < triangles.length; i++) {
-                // Check if the triangle shares an edge with the last one added to the polygon
-                let sharedVertices = polygon.filter(vertex => textures[triangles[i]].includes(vertex));
-
-                if (sharedVertices.length === 2) {
-                    // This triangle shares an edge with the polygon, so add its non-shared vertex to the polygon
-                    let nonSharedVertex = uvs[triangles[i]].find(vertex => !sharedVertices.includes(vertex));
-                    polygon.push(nonSharedVertex);
-                    
-                    // Remove this triangle from the list
-                    triangles.splice(i, 1);
-
-                    break;
+        // find a triangle that shares an edge with the polygon
+        for (let i = 0; i < triangles.length; i++) {
+            let triangleVertices = textures[triangles[i]].map(vertex => JSON.stringify(vertex));
+        
+            let sharedVertices = polygon.filter(vertex => triangleVertices.includes(vertex));
+        
+            if (sharedVertices.length === 2) {
+                // This triangle shares an edge with the polygon
+        
+                // Find the index of the first shared vertex in the polygon
+                let sharedIndex1 = polygon.indexOf(sharedVertices[0]);
+        
+                // Check the winding order
+                if (JSON.stringify(polygon[(sharedIndex1 + 1) % polygon.length]) === sharedVertices[1]) {
+                    // The shared edge is in the same order in both the triangle and the polygon
+        
+                    // Insert the non-shared vertex between the shared vertices
+                    let nonSharedVertex = triangleVertices.find(vertex => !sharedVertices.includes(vertex));
+                    polygon.splice(sharedIndex1 + 1, 0, nonSharedVertex);
+                } else {
+                    // The shared edge is in the opposite order in the triangle and the polygon
+        
+                    // Insert the non-shared vertex outside the shared vertices
+                    let nonSharedVertex = triangleVertices.find(vertex => !sharedVertices.includes(vertex));
+                    polygon.splice(sharedIndex1, 0, nonSharedVertex);
                 }
+        
+                // Remove this triangle from the list
+                triangles.splice(i, 1);
+        
+                // Restart the loop
+                i = -1;
             }
         }
-    
-        polygons.push(polygon);
+        // Convert the vertices back to their original form
+        polygons.push(polygon.map(vertex => JSON.parse(vertex)));
     }
     return polygons;
+}
+
+function drawPolygons(polygons) {
+    const canvas = document.getElementById('canvas');
+    const context = canvas.getContext('2d');
+
+    const w = canvas.width;
+    const h = canvas.height;
+
+    for (const polygon of polygons) {
+        context.beginPath();
+        context.moveTo(polygon[0].x * w, (1 - polygon[0].y) * h);
+        for (let i = 1; i < polygon.length; i++) {
+            context.lineTo(polygon[i].x * w, (1 - polygon[i].y) * h);
+        }
+        context.closePath();
+        context.strokeStyle = 'white';
+        context.stroke();
+    }
 }
 
 function clusterize(triangles) {
     const vertexToTrianglesMap = createVerticesToTrianglesMap(triangles);
     const adjacencyMap = createAdjacencyMap(vertexToTrianglesMap);
     const components = groupByAdjencyAndNormals(adjacencyMap);
-    const mergedUVs = mergeUVComponents(components);
-    console.log(mergedUVs);
+    const polygons = buildPolygons(components);
+    drawUvsOnTexture(textures, polygons);
 }
 
 
 const textureLoader = new THREE.TextureLoader();
 
-function showTextures(textures) {
+function drawUvsOnTexture(textures, polygons) {
     textureLoader.load(`data/texture_0.jpeg`, texture => {
         //const canvas = document.createElement('canvas');
         const canvas = document.getElementById('canvas');
@@ -296,9 +346,7 @@ function showTextures(textures) {
             context.closePath();
             context.strokeStyle = 'red';
             context.stroke();
-            if (i < 100) {
-                console.log(i);
-            }
         }
+        drawPolygons(polygons);
     });
 }
