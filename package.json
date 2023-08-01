@@ -1,0 +1,13 @@
+{
+  "name": "textureface",
+  "type": "module",
+  "scripts": {
+    "start": "web-dev-server --node-resolve --open --watch"
+  },
+  "dependencies": {
+    "three": "^0.154.0"
+  },
+  "devDependencies": {
+    "@web/dev-server": "^0.3.0"
+  }
+}
