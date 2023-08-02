@@ -6,7 +6,10 @@ import {colors} from './colors.js';
 const objLoader = new OBJLoader();
 const mtlLoader = new MTLLoader();
 
-
+// global variables
+let triangles = [];
+let textures = [];
+let polygons = [];
 
 const baseName = 'maquette_krimpen_cc_21-537684-346784';
 
@@ -37,7 +40,7 @@ canvasElement.addEventListener('click', e => {
 });
 
 function pointInTriangle(p, a, b, c) {
-    // Compute vectors        
+    // Compute vectors
     let v0 = c.clone().sub(a);
     let v1 = b.clone().sub(a);
     let v2 = p.clone().sub(a);
@@ -72,9 +75,6 @@ function findTriangle(uv) {
     }
     return -1;
 }
-
-let triangles = [];
-let textures = [];
 
 function drawPage() {
     triangles = [];
@@ -298,55 +298,70 @@ function groupByAdjencyAndNormals(adjacencyMap) {
     return components;
 }
 
-function buildPolygons(connectedComponents) {
-    let polygons = [];
-
-    for (let component of connectedComponents) {
-        // Convert the set of triangle indices into an array
-        let triangles = Array.from(component);
-    
-        if (triangles.length === 0) {
-            continue;
+function detriangulate(triangles) {
+    function minus (a, b) {
+        return {x: a.x - b.x, y: a.y - b.y};
+    }
+    const edges = [];
+    // add edges in counter clockwise order
+    for (let triangle of triangles) {
+        const a = triangle[0];
+        const b = triangle[1];
+        const c = triangle[2];
+        const AB = minus(b, a);
+        const AC = minus(c, a);
+        if (AB.x * AC.y - AB.y * AC.x  > 0) {
+            edges.push([a, b]);
+            edges.push([b, c]);
+            edges.push([c, a]);
+        } else {
+            edges.push([a, c]);
+            edges.push([c, b]);
+            edges.push([b, a]);
         }
-        /*if (triangles.length !== 2) {
-            continue;
-        }*/
-
-        // Start with one triangle
-        let polygon = [...textures[triangles[0]]].map(vertex => JSON.stringify(vertex));
-    
-        // Remove the first triangle from the list
-        triangles = triangles.slice(1);
-
-        // find a triangle that shares an edge with the polygon
-        for (let i = 0; i < triangles.length; i++) {
-            let triangleVertices = textures[triangles[i]].map(vertex => JSON.stringify(vertex));
-        
-            let sharedVertices = polygon.filter(vertex => triangleVertices.includes(vertex));
-        
-            if (sharedVertices.length === 2) {
-                // This triangle shares an edge with the polygon
-        
-                // Find the indices of the shared vertices in the polygon
-                let sharedIndex1 = polygon.indexOf(sharedVertices[0]);
-                let sharedIndex2 = polygon.indexOf(sharedVertices[1]);
-
-                // add remaining vertex in between sharedIndex1 and sharedIndex2
-                let nonSharedVertex = triangleVertices.find(vertex => !sharedVertices.includes(vertex));
-                if (sharedIndex1 > sharedIndex2) {
-                    polygon.splice(sharedIndex1, 0, nonSharedVertex);
-                } else {
-                    polygon.splice(sharedIndex2, 0, nonSharedVertex);
-                }
-                // Remove this triangle from the list
-                triangles.splice(i, 1);
-        
-                // Restart the loop
-                i = -1;
+    }
+    const borderEdges = [];
+    for (const edge of edges) {
+        const a = edge[0];
+        const b = edge[1];
+        if (!edges.find((edge)=>edge[0].x === b.x && edge[0].y === b.y && edge[1].x === a.x && edge[1].y === a.y)) {
+            borderEdges.push(edge);
+        }
+    }
+    const polygon = [];
+    const first = borderEdges[0][0];
+    let last = borderEdges[0][1];
+    polygon.push(first);
+    while (last.x !== first.x || last.y !== first.y) {
+        polygon.push(last);
+        let lastFound = false;
+        for (const edge of borderEdges) {
+            if (edge[0].x === last.x && edge[0].y === last.y) {
+                last = edge[1];
+                lastFound = true;
+                break;
             }
         }
-        // Convert the vertices back to their original form
-        polygons.push(polygon.map(vertex => JSON.parse(vertex)));
+        if (!lastFound) {
+            console.log('last not found');
+        }
+    }
+    return polygon;
+}
+
+
+function buildPolygons(connectedComponents) {
+    polygons = [];
+
+    //connectedComponents = connectedComponents.filter(component=>component.includes(371)); // debug
+    for (let component of connectedComponents) {
+        // Convert the set of triangle indices into an array
+        let triangleIndices = Array.from(component);
+        if (triangleIndices.length === 0) {
+            continue;
+        }
+        const polygon = detriangulate(triangleIndices.map(i => textures[i]));
+        polygons.push(polygon);
     }
     return polygons;
 }
@@ -354,7 +369,7 @@ function buildPolygons(connectedComponents) {
 function drawPolygons(polygons) {
     const canvas = document.getElementById('canvas');
     const context = canvas.getContext('2d');
-    let colorIndex = 0;
+    let colorIndex = 6;
 
     const w = canvas.width;
     const h = canvas.height;
