@@ -10,6 +10,7 @@ const mtlLoader = new MTLLoader();
 let triangles = [];
 let textures = [];
 let polygons = [];
+let image = null;
 
 const baseName = 'maquette_krimpen_cc_21-537684-346784';
 
@@ -21,12 +22,12 @@ const canvasElement = document.querySelector('#canvas');
 
 let scale = scaleElement.value;
 let angle = maxAngleElement.value;
-let showtriangles = showTrianglesElement.checked;
-let showpolygons = showPolygonsElement.checked;
+let showTriangles = showTrianglesElement.checked;
+let showPolygons = showPolygonsElement.checked;
 scaleElement.addEventListener('change', e => {scale = e.target.value; drawPage()});
 maxAngleElement.addEventListener('change', e => {angle = e.target.value; drawPage()});
-showTrianglesElement.addEventListener('change', e => {showtriangles = e.target.checked; drawPage()});
-showPolygonsElement.addEventListener('change', e => {showpolygons = e.target.checked; drawPage()});
+showTrianglesElement.addEventListener('change', e => {showTriangles = e.target.checked; drawPage()});
+showPolygonsElement.addEventListener('change', e => {showPolygons = e.target.checked; drawPage()});
 canvasElement.addEventListener('click', e => {
     // get coordinates of click
     const rect = e.target.getBoundingClientRect();
@@ -36,8 +37,52 @@ canvasElement.addEventListener('click', e => {
     const h = canvasElement.height;
     const uv = new THREE.Vector2(x / w, 1 - y / h);
     const triangle = findTriangle(uv);
-    updateStatus(`Triangle: ${triangle}`);
+    const polygon = findPolygon(uv);
+    if (polygon !== -1) {
+        clipPolygon(polygons[polygon]);
+    }
+    updateStatus(`Triangle: ${triangle}<br>Polygon: ${polygon}`);
 });
+
+// wait promise
+function wait(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function clipPolygon(polygon) {
+    // get canvas
+    const canvas = document.getElementById('canvas');
+    const context = canvas.getContext('2d');
+    context.save();
+    context.clearRect(0,0,canvas.width,canvas.height);
+    context.beginPath();
+    let minx = polygon[0].x;
+    let maxx = minx;
+    let miny = polygon[0].y;
+    let maxy = miny;
+    context.moveTo(polygon[0].x * canvas.width, (1 - polygon[0].y) * canvas.height);
+    for (let i = 1; i < polygon.length; i++) {
+        context.lineTo(polygon[i].x * canvas.width, (1 - polygon[i].y) * canvas.height);
+        minx = Math.min(minx, polygon[i].x);
+        maxx = Math.max(maxx, polygon[i].x);
+        miny = Math.min(miny, polygon[i].y);
+        maxy = Math.max(maxy, polygon[i].y);
+    }
+    context.closePath();
+    context.clip();
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const tempcanvas = document.createElement('canvas');
+    const tempcontext = tempcanvas.getContext('2d');
+    const tempwidth = (maxx - minx) * canvas.width;
+    const tempheight = (maxy - miny) * canvas.height;
+    tempcontext.width = tempwidth;
+    tempcontext.height = tempheight;
+    tempcontext.drawImage(canvas, minx * canvas.width, (1 - maxy) * canvas.height, tempwidth, tempheight, 0, 0, tempwidth, tempheight);
+    const docImage = document.querySelector('#image');
+    docImage.src = tempcanvas.toDataURL();
+    context.restore();
+    drawPage();
+}
 
 function pointInTriangle(p, a, b, c) {
     // Compute vectors
@@ -70,6 +115,27 @@ function findTriangle(uv) {
         const uvC = texture[2];
         // check if uv is inside triangle
         if (pointInTriangle(uv, uvA, uvB, uvC)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+function pointInPolygon(polygon, testPoint) {
+    let i, j, c = false;
+    for (i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+        if (((polygon[i].y > testPoint.y) != (polygon[j].y > testPoint.y)) &&
+            (testPoint.x < (polygon[j].x - polygon[i].x) * (testPoint.y - polygon[i].y) / (polygon[j].y - polygon[i].y) + polygon[i].x)) {
+            c = !c;
+        }
+    }
+    return c;
+}
+
+function findPolygon(uv) {
+    for (let i = 0; i < polygons.length; i++) {
+        const polygon = polygons[i];
+        if (pointInPolygon(polygon, uv)) {
             return i;
         }
     }
@@ -416,6 +482,7 @@ function drawUvsOnTexture(textures, polygons) {
         //const canvas = document.createElement('canvas');
         const canvas = document.getElementById('canvas');
         const context = canvas.getContext('2d');
+        image = texture.image;
         
         canvas.width = texture.image.width * scale;
         canvas.height = texture.image.height * scale;
@@ -425,7 +492,7 @@ function drawUvsOnTexture(textures, polygons) {
         //const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
         
         // draw the uv triangles
-        if (showtriangles) {
+        if (showTriangles) {
             for (let i = 0; i < textures.length; i++) {
                 const uvA = textures[i][0];
                 const uvB = textures[i][1];
@@ -444,7 +511,7 @@ function drawUvsOnTexture(textures, polygons) {
                 context.stroke();
             }
         }
-        if (showpolygons) {
+        if (showPolygons) {
             drawPolygons(polygons);
         }
     });
